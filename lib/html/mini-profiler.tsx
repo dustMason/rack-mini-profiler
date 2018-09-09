@@ -25,6 +25,24 @@ XMLHttpRequest.prototype.open = function(this: XMLHttpRequest, ...args: any[]) {
   return ret
 }
 
+type FetchListener = (result: TResult) => void
+const fetchListeners: FetchListener[] = []
+function addFetchListener(cb: FetchListener) {
+  fetchListeners.push(cb)
+}
+const realFetch = window.fetch
+window.fetch = function(input, init) {
+  return new Promise(function(resolve, reject) {
+    realFetch(input, init).then(function(response) {
+      fetchListeners.forEach(f => f(response))
+      resolve(response)
+    }).catch(function(error) {
+        reject(error)
+      }
+    )
+  })
+}
+
 function fetchResult(id: string, options: Options): Promise<Result> {
   return new Promise((resolve, reject) => {
     const req = new XMLHttpRequest
@@ -130,7 +148,7 @@ class Details extends Component<MiniProfilerState, void> {
       flex: 1
     },
     bold: {
-    fontWeight: 'bold'
+      fontWeight: 'bold'
     }
   })
 
@@ -216,6 +234,21 @@ class MiniProfiler extends Component<{}, MiniProfilerState> {
   }
 
   componentDidMount() {
+    addFetchListener((response) => {
+      console.log("fetch listener", response)
+      if (response.url.indexOf(this.options.path) !== -1) return
+
+      // Ignore cross domain requests
+      if (!response.url.startsWith(`${window.location.protocol}//${window.location.host}`)) return
+
+      for (var pair of response.headers.entries()) {
+        if (pair[0] && (pair[0].toLowerCase() == 'x-miniprofiler-ids')) {
+          const ids: string[] = JSON.parse(pair[1]);
+          ids.forEach(this.fetchResultOnce)
+        }
+      }
+    });
+
     addXhrOpenListener((xhr) => {
       xhr.addEventListener('load', () => {
         if (xhr.responseURL.indexOf(this.options.path) !== -1) return
